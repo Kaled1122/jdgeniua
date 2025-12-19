@@ -127,25 +127,37 @@ Generate measurable KPIs for EACH responsibility below.
 RULES:
 - Max 3 KPIs per responsibility
 - Quantifiable only
-- MUST include formulas
+- MUST include detailed, understandable formulas with explanations
 - Allowed units: %, count, hours, days
 - No subjective language
 - Each KPI must be specific to the responsibility (not generic)
 - Make KPIs relevant to the action, object, and outcome
 
+FORMULA REQUIREMENTS:
+- Formulas must be clear and easy to understand
+- Include variable definitions (what each part means)
+- Use simple mathematical operations (+, -, *, /)
+- Format: "Formula: (X / Y) * 100 | X = description of X, Y = description of Y"
+- Make it clear what each variable represents
+
 Each KPI must have:
 - name: Clear, descriptive name
-- formula: Mathematical formula for calculation
+- formula: Detailed mathematical formula with variable explanations. Format: "Formula: (X / Y) * 100 | X = what X represents, Y = what Y represents"
 - target: Specific target value (e.g., ">= 95%", "<= 2 hours")
 - unit: Measurement unit (%, count, hours, days)
-- data_source: Where the data comes from
+- data_source: Where the data comes from (be specific)
 - frequency: How often measured (Daily, Weekly, Monthly, Quarterly)
 - indicator_type: Leading or Lagging
+
+FORMULA EXAMPLES:
+Good: "Formula: (Courses Completed On Time / Total Courses Scheduled) * 100 | Courses Completed On Time = number of courses finished by deadline, Total Courses Scheduled = all courses planned for the period"
+Good: "Formula: (Number of Observations Completed / Total Team Members) | Number of Observations Completed = performance reviews conducted, Total Team Members = size of team being managed"
+Bad: "(A/B)*100" (too vague, no explanation)
 
 Structured Responsibilities:
 {responsibilities}
 
-Generate specific, measurable KPIs for each responsibility. Make them relevant to the actual work being done.
+Generate specific, measurable KPIs for each responsibility. Make formulas detailed, clear, and easy to understand with full variable explanations.
 """)
 
 # =========================================
@@ -297,10 +309,109 @@ def main_agent(jd_text: str):
 # STREAMLIT UI
 # =========================================
 
-st.set_page_config(page_title="JD → KPI Generator (FAST)", layout="wide")
+st.set_page_config(
+    page_title="JD → KPI Generator",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-st.title("JD → KPI Generator")
-st.caption("Batched KPI Engine • Fast • Stable • Railway-Ready")
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(90deg, #1f77b4 0%, #ff7f0e 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        margin-bottom: 2rem;
+        color: white;
+    }
+    .main-header h1 {
+        color: white;
+        margin: 0;
+    }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #1f77b4;
+    }
+    .kpi-card {
+        background-color: #ffffff;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+        border: 1px solid #e0e0e0;
+    }
+    .responsibility-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        margin-bottom: 1.5rem;
+    }
+    .stButton>button {
+        width: 100%;
+        background: linear-gradient(90deg, #1f77b4 0%, #ff7f0e 100%);
+        color: white;
+        font-weight: bold;
+        font-size: 1.1rem;
+        padding: 0.75rem;
+        border-radius: 8px;
+        border: none;
+    }
+    .stButton>button:hover {
+        background: linear-gradient(90deg, #1565a0 0%, #e66f00 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📊 JD → KPI Generator</h1>
+    <p style="margin: 0.5rem 0 0 0; font-size: 1.1rem;">Transform Job Descriptions into Measurable KPIs</p>
+    <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Batched KPI Engine • Fast • Stable • Railway-Ready</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("⚙️ Settings")
+    
+    st.markdown("### 📋 About")
+    st.info("""
+    This tool uses AI to:
+    1. Extract structured responsibilities from job descriptions
+    2. Generate measurable KPIs for each responsibility
+    
+    **Two-Stage Pipeline:**
+    - Stage 1: Responsibility Extraction (Model 1)
+    - Stage 2: KPI Generation (Model 2)
+    """)
+    
+    st.markdown("### 🔑 API Status")
+    if os.getenv("OPENAI_API_KEY"):
+        st.success("✅ API Key Configured")
+    else:
+        st.error("❌ API Key Missing")
+        st.code("export OPENAI_API_KEY='your-key'", language="bash")
+    
+    st.markdown("### 📊 Model Info")
+    st.caption(f"**JD Model:** {JD_MODEL}")
+    st.caption(f"**KPI Model:** {KPI_MODEL}")
+    
+    st.markdown("---")
+    st.markdown("### 💡 Tips")
+    st.markdown("""
+    - Paste complete job descriptions
+    - Include all responsibilities
+    - Bullet points work fine
+    - Minimum 50 characters required
+    """)
 
 # Check for OpenAI API key
 if not os.getenv("OPENAI_API_KEY"):
@@ -309,30 +420,148 @@ if not os.getenv("OPENAI_API_KEY"):
     st.code("export OPENAI_API_KEY='your-api-key-here'", language="bash")
     st.stop()
 
-st.info("Paste JOB PURPOSE + RESPONSIBILITIES. Bullet points are fine.")
+# Main input area
+st.header("📝 Input Job Description")
+st.info("💡 **Tip:** Paste JOB PURPOSE + RESPONSIBILITIES. Bullet points are fine.")
 
 jd_text = st.text_area(
     "Paste Job Description",
     height=360,
-    placeholder="Paste the full job description here..."
+    placeholder="Paste the full job description here...\n\nExample:\n• Manage team of 10 developers\n• Deliver projects on time\n• Ensure code quality standards",
+    help="Enter a complete job description with responsibilities"
 )
 
-if st.button("Run Agent System"):
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    run_button = st.button("🚀 Generate KPIs", type="primary", use_container_width=True)
+
+if run_button:
     if not jd_text.strip():
-        st.error("Please paste a job description.")
+        st.error("❌ Please paste a job description.")
+        st.stop()
+    
+    if len(jd_text.strip()) < 50:
+        st.warning("⚠️ Job description seems too short. Please provide more details.")
         st.stop()
 
     try:
-        responsibilities, kpi_output = main_agent(jd_text)
-
-        st.subheader("1️⃣ Structured Responsibilities")
-        st.json([r.model_dump() for r in responsibilities])
-
-        st.subheader("2️⃣ KPIs (Batched Generation)")
-        st.json(kpi_output)
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        # Export functionality
-        st.subheader("3️⃣ Export Results")
+        responsibilities, kpi_output = main_agent(jd_text)
+        
+        progress_bar.progress(100)
+        status_text.empty()
+        
+        # Success message
+        total_kpis = sum(len(item['kpis']) for item in kpi_output)
+        st.success(f"✅ Successfully generated {total_kpis} KPIs across {len(responsibilities)} responsibilities!")
+        
+        # Metrics
+        st.markdown("---")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📋 Responsibilities", len(responsibilities))
+        with col2:
+            st.metric("📊 Total KPIs", total_kpis)
+        with col3:
+            avg_kpis = round(total_kpis / len(responsibilities), 1) if responsibilities else 0
+            st.metric("📈 Avg KPIs/Responsibility", avg_kpis)
+        with col4:
+            st.metric("✅ Status", "Complete")
+        
+        st.markdown("---")
+        
+        # Section 1: Structured Responsibilities
+        st.header("1️⃣ Structured Responsibilities")
+        st.caption("Responsibilities extracted and structured from the job description")
+        
+        # Display responsibilities in cards
+        for idx, resp in enumerate(responsibilities):
+            with st.container():
+                st.markdown(f"""
+                <div class="responsibility-card">
+                    <h3 style="margin: 0; color: white;">Responsibility {idx + 1}</h3>
+                    <p style="margin: 0.5rem 0; font-size: 1.1rem; font-weight: bold;">{resp.action} {resp.object}</p>
+                    <p style="margin: 0.3rem 0; opacity: 0.9;"><strong>Outcome:</strong> {resp.outcome}</p>
+                    <p style="margin: 0.3rem 0; opacity: 0.9;"><strong>Scope:</strong> {resp.control_scope}</p>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Collapsible JSON view
+        with st.expander("🔍 View Raw JSON"):
+            st.json([r.model_dump() for r in responsibilities])
+        
+        st.markdown("---")
+        
+        # Section 2: KPIs
+        st.header("2️⃣ Generated KPIs")
+        st.caption("Measurable KPIs for each responsibility")
+        
+        # Display KPIs in a more readable format
+        for idx, item in enumerate(kpi_output):
+            resp = item['responsibility']
+            
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                        color: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 1.5rem;">
+                <h3 style="margin: 0; color: white;">📋 Responsibility {idx + 1}: {resp['action']} {resp['object']}</h3>
+                <p style="margin: 0.5rem 0 0 0; opacity: 0.9;"><strong>Outcome:</strong> {resp['outcome']}</p>
+                <p style="margin: 0.3rem 0 0 0; opacity: 0.9;"><strong>Scope:</strong> {resp['control_scope']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # KPI cards
+            for kpi_idx, kpi in enumerate(item['kpis']):
+                with st.container():
+                    st.markdown(f"""
+                    <div class="kpi-card">
+                        <h4 style="margin: 0 0 1rem 0; color: #1f77b4;">📊 KPI {kpi_idx + 1}: {kpi['name']}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("**📐 Formula**")
+                        # Split formula if it has explanations (| separator)
+                        if " | " in kpi['formula']:
+                            formula_parts = kpi['formula'].split(" | ", 1)
+                            st.code(formula_parts[0], language="text")
+                            st.markdown("**Variable Definitions:**")
+                            st.info(formula_parts[1])
+                        else:
+                            st.code(kpi['formula'], language="text")
+                        
+                        st.markdown("**🎯 Target**")
+                        st.success(kpi['target'])
+                        
+                        st.markdown("**📏 Unit**")
+                        st.info(kpi['unit'])
+                    with col2:
+                        st.markdown("**📂 Data Source**")
+                        st.info(kpi['data_source'])
+                        
+                        st.markdown("**🔄 Frequency**")
+                        st.info(kpi['frequency'])
+                        
+                        st.markdown("**📈 Indicator Type**")
+                        if kpi['indicator_type'].lower() == 'leading':
+                            st.success(f"🟢 {kpi['indicator_type']}")
+                        else:
+                            st.info(f"🔵 {kpi['indicator_type']}")
+            
+            st.divider()
+        
+        # Collapsible JSON view
+        with st.expander("🔍 View Raw JSON Output"):
+            st.json(kpi_output)
+        
+        st.markdown("---")
+        
+        # Section 3: Export
+        st.header("3️⃣ Export Results")
+        st.caption("Download your KPIs in various formats")
         
         # CSV Export
         try:
@@ -365,24 +594,44 @@ if st.button("Run Agent System"):
             df.to_csv(csv_buffer, index=False)
             csv_data = csv_buffer.getvalue()
             
-            st.download_button(
-                "📥 Download as CSV",
-                csv_data,
-                "kpis.csv",
-                "text/csv",
-                key="download-csv"
-            )
+            # Export buttons in columns
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📥 Download as CSV",
+                    csv_data,
+                    "kpis.csv",
+                    "text/csv",
+                    key="download-csv",
+                    use_container_width=True,
+                    type="primary"
+                )
+            with col2:
+                # JSON export
+                json_data = json.dumps(kpi_output, indent=2)
+                st.download_button(
+                    "📄 Download as JSON",
+                    json_data,
+                    "kpis.json",
+                    "application/json",
+                    key="download-json",
+                    use_container_width=True
+                )
             
             # Show preview
-            with st.expander("📊 Preview CSV Data"):
-                st.dataframe(df, use_container_width=True)
+            with st.expander("📊 Preview Data Table"):
+                st.dataframe(df, use_container_width=True, height=400)
                 
         except ImportError:
-            st.info("💡 Install pandas for CSV export: `pip install pandas`")
+            st.warning("💡 Install pandas for CSV export: `pip install pandas`")
         except Exception as e:
-            st.warning(f"Export failed: {str(e)}")
+            st.error(f"❌ Export failed: {str(e)}")
 
     except Exception as e:
-        st.error("Processing failed")
-        st.code(str(e))
-        st.exception(e)
+        st.error("❌ Processing failed")
+        st.error(f"**Error:** {str(e)}")
+        
+        with st.expander("🔍 Error Details"):
+            st.exception(e)
+        
+        st.info("💡 **Tips to fix:**\n- Check your API key is set correctly\n- Ensure job description is complete\n- Try with a shorter description first")
