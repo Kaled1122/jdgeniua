@@ -1,6 +1,7 @@
 import streamlit as st
 import re
 import json
+import os
 from typing import List
 from pydantic import BaseModel
 
@@ -14,8 +15,16 @@ from langchain_core.prompts import ChatPromptTemplate
 JD_MODEL = "gpt-4o-mini"
 KPI_MODEL = "gpt-4o-mini"
 
-jd_llm = ChatOpenAI(model=JD_MODEL, temperature=0)
-kpi_llm = ChatOpenAI(model=KPI_MODEL, temperature=0)
+# Initialize LLMs (will be checked when used)
+def get_jd_llm():
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OPENAI_API_KEY environment variable is not set. Please set it to use this application.")
+    return ChatOpenAI(model=JD_MODEL, temperature=0)
+
+def get_kpi_llm():
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OPENAI_API_KEY environment variable is not set. Please set it to use this application.")
+    return ChatOpenAI(model=KPI_MODEL, temperature=0)
 
 # =========================================
 # SCHEMAS
@@ -45,9 +54,26 @@ def extract_json(text: str):
         raise ValueError("Empty model output")
 
     text = text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1].strip()
-
+    
+    # Handle markdown code blocks
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        # Try to extract JSON from any code block
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part and (part.startswith("{") or part.startswith("[")):
+                text = part
+                break
+    
+    # Try to find JSON object/array in the text
+    if not (text.startswith("{") or text.startswith("[")):
+        # Try to extract JSON from text
+        json_match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
+        if json_match:
+            text = json_match.group(1)
+    
     return json.loads(text)
 
 # =========================================
@@ -97,6 +123,7 @@ Structured Responsibilities:
 # =========================================
 
 def jd_normalizer(jd_text: str) -> List[StructuredResponsibility]:
+    jd_llm = get_jd_llm()
     response = jd_llm.invoke(
         JD_REWRITE_PROMPT.format(jd_text=jd_text)
     )
@@ -127,10 +154,10 @@ def fallback_kpis(resp: StructuredResponsibility) -> List[KPI]:
 # =========================================
 
 def batched_kpi_engine(responsibilities: List[StructuredResponsibility]):
-
+    kpi_llm = get_kpi_llm()
     response = kpi_llm.invoke(
         KPI_BATCH_PROMPT.format(
-            responsibilities=[r.dict() for r in responsibilities]
+            responsibilities=json.dumps([r.model_dump() for r in responsibilities], indent=2)
         )
     )
 
@@ -162,8 +189,8 @@ def batched_kpi_engine(responsibilities: List[StructuredResponsibility]):
             kpis = fallback_kpis(resp)
 
         final.append({
-            "responsibility": resp.dict(),
-            "kpis": [k.dict() for k in kpis]
+            "responsibility": resp.model_dump(),
+            "kpis": [k.model_dump() for k in kpis]
         })
 
     return final
@@ -194,6 +221,13 @@ st.set_page_config(page_title="JD → KPI Generator (FAST)", layout="wide")
 st.title("JD → KPI Generator")
 st.caption("Batched KPI Engine • Fast • Stable • Railway-Ready")
 
+# Check for OpenAI API key
+if not os.getenv("OPENAI_API_KEY"):
+    st.error("⚠️ **OPENAI_API_KEY environment variable is not set.**")
+    st.info("Please set your OpenAI API key as an environment variable to use this application.")
+    st.code("export OPENAI_API_KEY='your-api-key-here'", language="bash")
+    st.stop()
+
 st.info("Paste JOB PURPOSE + RESPONSIBILITIES. Bullet points are fine.")
 
 jd_text = st.text_area(
@@ -212,7 +246,7 @@ if st.button("Run Agent System"):
             responsibilities, kpi_output = main_agent(jd_text)
 
         st.subheader("1️⃣ Structured Responsibilities")
-        st.json([r.dict() for r in responsibilities])
+        st.json([r.model_dump() for r in responsibilities])
 
         st.subheader("2️⃣ KPIs (Batched Generation)")
         st.json(kpi_output)
