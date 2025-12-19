@@ -1,5 +1,5 @@
 # =========================================
-# app.py — JD → KPI Agentic System (SAFE)
+# app.py — JD → KPI Agentic System (HARDENED)
 # =========================================
 
 import streamlit as st
@@ -51,14 +51,16 @@ class KPI(BaseModel):
 # =========================================
 
 def extract_json(text: str):
-    """
-    Safely extract JSON from LLM output.
-    Handles markdown, stray text, and whitespace.
-    """
+    if not text or not text.strip():
+        raise ValueError("Model returned empty output")
+
     text = text.strip()
 
+    # Remove markdown fences if present
     if text.startswith("```"):
-        text = text.split("```")[1]
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1].strip()
 
     return json.loads(text)
 
@@ -69,15 +71,19 @@ def extract_json(text: str):
 JD_REWRITE_PROMPT = ChatPromptTemplate.from_template("""
 You are Sub-Agent 1: JD Normalizer.
 
-Rewrite job responsibilities into structured responsibilities.
+Convert the following job description into structured responsibilities.
 
-STRICT RULES:
-- Do NOT generate KPIs
-- Do NOT add commentary
-- Do NOT use subjective adjectives
-- Each item MUST include:
+MANDATORY RULES:
+- NEVER return empty output
+- Even if input is already a bullet list, rewrite each item
+- Output one structured object per responsibility
+- Infer outcomes conservatively if not explicit
+
+STRICT OUTPUT FORMAT:
+- JSON ARRAY ONLY
+- Each object MUST contain:
   action, object, outcome, control_scope
-- Output JSON ARRAY ONLY
+- No commentary, no markdown
 
 Job Description:
 {jd_text}
@@ -86,57 +92,88 @@ Job Description:
 KPI_PROMPT = ChatPromptTemplate.from_template("""
 You are Sub-Agent 2: KPI Engineer.
 
-Generate measurable KPIs ONLY.
+Generate measurable KPIs ONLY for the given responsibility.
 
-STRICT RULES:
+MANDATORY RULES:
+- NEVER return empty output
 - Max 3 KPIs
 - KPIs MUST be quantifiable
 - KPIs MUST include formulas (math only)
 - Allowed units: %, count, hours, days
-- No subjective words
+- No subjective words (quality, effectiveness, initiative, etc.)
 - KPIs must be controllable by the role
 - Output JSON ARRAY ONLY
+- No commentary
 
 Structured Responsibility:
 {responsibility}
 """)
 
 # =========================================
-# SUB-AGENT 1 — JD NORMALIZER
+# SUB-AGENT 1 — JD NORMALIZER (WITH RETRY)
 # =========================================
 
-def jd_normalizer(jd_text: str) -> List[StructuredResponsibility]:
-    response = jd_llm.invoke(
-        JD_REWRITE_PROMPT.format(jd_text=jd_text)
+def jd_normalizer(jd_text: str, max_retries: int = 2) -> List[StructuredResponsibility]:
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        response = jd_llm.invoke(
+            JD_REWRITE_PROMPT.format(jd_text=jd_text)
+        )
+
+        try:
+            raw = extract_json(response.content)
+
+            if not isinstance(raw, list) or len(raw) == 0:
+                raise ValueError("JD Normalizer returned empty or invalid JSON")
+
+            return [
+                StructuredResponsibility(**item)
+                for item in raw
+            ]
+
+        except Exception as e:
+            last_error = e
+
+    raise RuntimeError(
+        f"JD Normalizer failed after {max_retries + 1} attempts: {last_error}"
     )
 
-    raw = extract_json(response.content)
-
-    return [
-        StructuredResponsibility(**item)
-        for item in raw
-    ]
-
 # =========================================
-# SUB-AGENT 2 — KPI ENGINEER
+# SUB-AGENT 2 — KPI ENGINEER (WITH RETRY)
 # =========================================
 
 def kpi_engineer(
-    responsibility: StructuredResponsibility
+    responsibility: StructuredResponsibility,
+    max_retries: int = 2
 ) -> List[KPI]:
 
-    response = kpi_llm.invoke(
-        KPI_PROMPT.format(
-            responsibility=responsibility.dict()
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        response = kpi_llm.invoke(
+            KPI_PROMPT.format(
+                responsibility=responsibility.dict()
+            )
         )
+
+        try:
+            raw = extract_json(response.content)
+
+            if not isinstance(raw, list) or len(raw) == 0:
+                raise ValueError("KPI Engineer returned empty or invalid JSON")
+
+            return [
+                KPI(**item)
+                for item in raw
+            ]
+
+        except Exception as e:
+            last_error = e
+
+    raise RuntimeError(
+        f"KPI Engineer failed after {max_retries + 1} attempts: {last_error}"
     )
-
-    raw = extract_json(response.content)
-
-    return [
-        KPI(**item)
-        for item in raw
-    ]
 
 # =========================================
 # VALIDATION LAYER (NO AI)
@@ -151,24 +188,21 @@ def validate_kpis(kpis: List[KPI]):
 
     for kpi in kpis:
         if not re.search(r"[*/+\-÷%]", kpi.formula):
-            raise ValueError(
-                f"Invalid formula: {kpi.formula}"
-            )
+            raise ValueError(f"Invalid formula: {kpi.formula}")
 
         if any(w in kpi.name.lower() for w in forbidden):
-            raise ValueError(
-                f"Subjective KPI detected: {kpi.name}"
-            )
+            raise ValueError(f"Subjective KPI detected: {kpi.name}")
 
 # =========================================
 # MAIN AGENT (ORCHESTRATOR — NO AI)
 # =========================================
 
 def main_agent(jd_text: str):
-    # Step 1 — Normalize JD
+    if len(jd_text.strip()) < 50:
+        raise ValueError("Job description too short to extract responsibilities")
+
     responsibilities = jd_normalizer(jd_text)
 
-    # Step 2 — Generate KPIs per responsibility
     output = []
 
     for resp in responsibilities:
@@ -192,11 +226,16 @@ st.set_page_config(
 )
 
 st.title("JD → KPI Generator")
-st.caption("Main Orchestrator + 2 Explicit Sub-Agents (Safe & Deterministic)")
+st.caption("Main Orchestrator + 2 Explicit Sub-Agents (Hardened & Deterministic)")
+
+st.info(
+    "Paste JOB PURPOSE + RESPONSIBILITIES. "
+    "Bullet points are fine. Do NOT paste qualifications only."
+)
 
 jd_text = st.text_area(
     "Paste Job Description",
-    height=320,
+    height=340,
     placeholder="Paste the full job description here..."
 )
 
@@ -208,10 +247,10 @@ if st.button("Run Agent System"):
     try:
         responsibilities, kpi_output = main_agent(jd_text)
 
-        st.subheader("1️⃣ Structured Responsibilities (Sub-Agent 1)")
+        st.subheader("1️⃣ Structured Responsibilities (JD Normalizer)")
         st.json([r.dict() for r in responsibilities])
 
-        st.subheader("2️⃣ KPIs (Sub-Agent 2)")
+        st.subheader("2️⃣ KPIs (KPI Engineer)")
         st.json(kpi_output)
 
     except ValidationError as e:
