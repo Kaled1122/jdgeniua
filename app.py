@@ -1,37 +1,28 @@
 # =========================================
-# app.py — JD → KPI Agentic System (GPT-5.2)
+# app.py — JD → KPI Agentic System (FAST)
 # =========================================
 
 import streamlit as st
 import re
 import json
 from typing import List
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 # =========================================
-# MODEL CONFIG (EXPLICIT)
+# MODEL CONFIG (VALID + FAST)
 # =========================================
 
 JD_MODEL = "gpt-4o-mini"
 KPI_MODEL = "gpt-4o-mini"
 
-# Sub-Agent 1 — JD Normalizer
-jd_llm = ChatOpenAI(
-    model=JD_MODEL,
-    temperature=0
-)
-
-# Sub-Agent 2 — KPI Engineer
-kpi_llm = ChatOpenAI(
-    model=KPI_MODEL,
-    temperature=0
-)
+jd_llm = ChatOpenAI(model=JD_MODEL, temperature=0)
+kpi_llm = ChatOpenAI(model=KPI_MODEL, temperature=0)
 
 # =========================================
-# SCHEMAS (HARD CONSTRAINTS)
+# SCHEMAS
 # =========================================
 
 class StructuredResponsibility(BaseModel):
@@ -47,7 +38,7 @@ class KPI(BaseModel):
     unit: str
     data_source: str
     frequency: str
-    indicator_type: str  # leading / lagging
+    indicator_type: str
 
 # =========================================
 # JSON SAFETY
@@ -55,14 +46,11 @@ class KPI(BaseModel):
 
 def extract_json(text: str):
     if not text or not text.strip():
-        raise ValueError("Model returned empty output")
+        raise ValueError("Empty model output")
 
     text = text.strip()
-
     if text.startswith("```"):
-        parts = text.split("```")
-        if len(parts) >= 2:
-            text = parts[1].strip()
+        text = text.split("```")[1].strip()
 
     return json.loads(text)
 
@@ -75,121 +63,59 @@ You are Sub-Agent 1: JD Normalizer.
 
 Convert the job description into structured responsibilities.
 
-MANDATORY:
+RULES:
+- Rewrite each responsibility
 - NEVER return empty output
-- Rewrite each responsibility even if already in bullet form
-- One structured object per responsibility
-- Infer outcomes conservatively if implicit
-
-OUTPUT RULES:
 - JSON ARRAY ONLY
-- Each object MUST include:
+- Each item MUST include:
   action, object, outcome, control_scope
-- No commentary, no markdown
 
 Job Description:
 {jd_text}
 """)
 
-KPI_PROMPT = ChatPromptTemplate.from_template("""
+KPI_BATCH_PROMPT = ChatPromptTemplate.from_template("""
 You are Sub-Agent 2: KPI Engineer.
 
-Generate measurable KPIs ONLY for the responsibility below.
+Generate measurable KPIs for EACH responsibility below.
 
-MANDATORY:
-- NEVER return empty output
-- Max 3 KPIs
+RULES:
+- Max 3 KPIs per responsibility
 - Quantifiable only
-- MUST include formulas (math only)
+- MUST include formulas
 - Allowed units: %, count, hours, days
 - No subjective language
-- KPI must be controllable by the role
-- Output JSON ARRAY ONLY
-- No commentary
+- JSON ARRAY ONLY
+- Each item must be:
+  {{
+    "responsibility_index": number,
+    "kpis": [ ... ]
+  }}
 
-Structured Responsibility:
-{responsibility}
+Structured Responsibilities:
+{responsibilities}
 """)
 
 # =========================================
-# SUB-AGENT 1 — JD NORMALIZER (RETRY)
+# JD NORMALIZER
 # =========================================
 
-def jd_normalizer(jd_text: str, max_retries: int = 2) -> List[StructuredResponsibility]:
-    last_error = None
+def jd_normalizer(jd_text: str) -> List[StructuredResponsibility]:
+    response = jd_llm.invoke(
+        JD_REWRITE_PROMPT.format(jd_text=jd_text)
+    )
+    raw = extract_json(response.content)
 
-    for _ in range(max_retries + 1):
-        response = jd_llm.invoke(
-            JD_REWRITE_PROMPT.format(jd_text=jd_text)
-        )
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("JD Normalizer failed")
 
-        try:
-            raw = extract_json(response.content)
-
-            if not isinstance(raw, list) or not raw:
-                raise ValueError("JD Normalizer returned invalid JSON")
-
-            return [
-                StructuredResponsibility(**item)
-                for item in raw
-            ]
-
-        except Exception as e:
-            last_error = e
-
-    raise RuntimeError(f"JD Normalizer failed: {last_error}")
+    return [StructuredResponsibility(**r) for r in raw]
 
 # =========================================
 # KPI FALLBACK (DETERMINISTIC)
 # =========================================
 
 def fallback_kpis(resp: StructuredResponsibility) -> List[KPI]:
-    outcome = resp.outcome.lower()
-
-    if "record" in outcome or "data" in outcome:
-        return [KPI(
-            name="Record Accuracy Rate",
-            formula="(Correct records / Total records audited) * 100",
-            target=">= 99%",
-            unit="%",
-            data_source="TMIS / Audit logs",
-            frequency="Quarterly",
-            indicator_type="Lagging"
-        )]
-
-    if "test" in outcome or "assessment" in outcome:
-        return [KPI(
-            name="On-Time Test Delivery Rate",
-            formula="(Tests delivered on time / Total scheduled tests) * 100",
-            target=">= 98%",
-            unit="%",
-            data_source="TMIS / Test schedule",
-            frequency="Monthly",
-            indicator_type="Lagging"
-        )]
-
-    if "teach" in outcome or "instruction" in outcome:
-        return [KPI(
-            name="Lesson Delivery Completion Rate",
-            formula="(Lessons delivered / Lessons scheduled) * 100",
-            target=">= 95%",
-            unit="%",
-            data_source="Timetable / LMS",
-            frequency="Monthly",
-            indicator_type="Lagging"
-        )]
-
-    if "compliance" in outcome or "procedure" in outcome:
-        return [KPI(
-            name="Compliance Adherence Rate",
-            formula="(Compliant activities / Activities audited) * 100",
-            target="100%",
-            unit="%",
-            data_source="Compliance reports",
-            frequency="Quarterly",
-            indicator_type="Lagging"
-        )]
-
     return [KPI(
         name="Task Completion Rate",
         formula="(Completed tasks / Assigned tasks) * 100",
@@ -201,48 +127,43 @@ def fallback_kpis(resp: StructuredResponsibility) -> List[KPI]:
     )]
 
 # =========================================
-# SUB-AGENT 2 — KPI ENGINEER (RETRY + FALLBACK)
+# BATCHED KPI ENGINE (FAST FIX)
 # =========================================
 
-def kpi_engineer(
-    responsibility: StructuredResponsibility,
-    max_retries: int = 2
-) -> List[KPI]:
+def batched_kpi_engine(responsibilities: List[StructuredResponsibility]):
 
-    last_error = None
-
-    for _ in range(max_retries + 1):
-        response = kpi_llm.invoke(
-            KPI_PROMPT.format(responsibility=responsibility.dict())
+    response = kpi_llm.invoke(
+        KPI_BATCH_PROMPT.format(
+            responsibilities=[r.dict() for r in responsibilities]
         )
+    )
 
-        try:
-            raw = extract_json(response.content)
+    try:
+        raw = extract_json(response.content)
+    except Exception:
+        raw = []
 
-            if not isinstance(raw, list) or not raw:
-                raise ValueError("KPI Engineer returned invalid JSON")
+    results = {}
 
-            return [KPI(**item) for item in raw]
+    # Build map from batch output
+    if isinstance(raw, list):
+        for item in raw:
+            idx = item.get("responsibility_index")
+            try:
+                results[idx] = [KPI(**k) for k in item["kpis"]]
+            except Exception:
+                pass
 
-        except Exception as e:
-            last_error = e
+    # Ensure every responsibility has KPIs
+    final = []
+    for i, resp in enumerate(responsibilities):
+        kpis = results.get(i) or fallback_kpis(resp)
+        final.append({
+            "responsibility": resp.dict(),
+            "kpis": [k.dict() for k in kpis]
+        })
 
-    # Guaranteed safe fallback
-    return fallback_kpis(responsibility)
-
-# =========================================
-# VALIDATION (ANTI-SUBJECTIVITY)
-# =========================================
-
-def validate_kpis(kpis: List[KPI]):
-    forbidden = ["quality", "effective", "initiative", "excellent", "good", "poor"]
-
-    for kpi in kpis:
-        if not re.search(r"[*/+\-%]", kpi.formula):
-            raise ValueError(f"Invalid formula: {kpi.formula}")
-
-        if any(word in kpi.name.lower() for word in forbidden):
-            raise ValueError(f"Subjective KPI detected: {kpi.name}")
+    return final
 
 # =========================================
 # MAIN AGENT (NO AI)
@@ -253,27 +174,22 @@ def main_agent(jd_text: str):
         raise ValueError("Job description too short")
 
     responsibilities = jd_normalizer(jd_text)
-    output = []
 
-    for resp in responsibilities:
-        kpis = kpi_engineer(resp)
-        validate_kpis(kpis)
+    # Limit to avoid junk bullets
+    responsibilities = responsibilities[:8]
 
-        output.append({
-            "responsibility": resp.dict(),
-            "kpis": [k.dict() for k in kpis]
-        })
+    kpi_output = batched_kpi_engine(responsibilities)
 
-    return responsibilities, output
+    return responsibilities, kpi_output
 
 # =========================================
 # STREAMLIT UI
 # =========================================
 
-st.set_page_config(page_title="JD → KPI Generator (GPT-5.2)", layout="wide")
+st.set_page_config(page_title="JD → KPI Generator (FAST)", layout="wide")
 
 st.title("JD → KPI Generator")
-st.caption("Main Orchestrator + 2 Explicit Sub-Agents (GPT-5.2, Hardened)")
+st.caption("Batched KPI Engine • Fast • Stable • Railway-Ready")
 
 st.info("Paste JOB PURPOSE + RESPONSIBILITIES. Bullet points are fine.")
 
@@ -289,12 +205,13 @@ if st.button("Run Agent System"):
         st.stop()
 
     try:
-        responsibilities, kpi_output = main_agent(jd_text)
+        with st.spinner("Processing job description..."):
+            responsibilities, kpi_output = main_agent(jd_text)
 
         st.subheader("1️⃣ Structured Responsibilities")
         st.json([r.dict() for r in responsibilities])
 
-        st.subheader("2️⃣ KPIs")
+        st.subheader("2️⃣ KPIs (Batched Generation)")
         st.json(kpi_output)
 
     except Exception as e:
