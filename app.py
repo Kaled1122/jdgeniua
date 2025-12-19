@@ -1,7 +1,3 @@
-# =========================================
-# app.py — JD → KPI Agentic System (FAST)
-# =========================================
-
 import streamlit as st
 import re
 import json
