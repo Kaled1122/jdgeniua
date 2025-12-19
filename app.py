@@ -15,8 +15,8 @@ from langchain_core.prompts import ChatPromptTemplate
 # MODEL CONFIG (EXPLICIT)
 # =========================================
 
-JD_MODEL = "gpt-5.2"
-KPI_MODEL = "gpt-5.2"
+JD_MODEL = "gpt-4o-mini"
+KPI_MODEL = "gpt-4o-mini"
 
 # Sub-Agent 1 — JD Normalizer
 jd_llm = ChatOpenAI(
