@@ -134,10 +134,14 @@ def batched_kpi_engine(responsibilities: List[StructuredResponsibility]):
         )
     )
 
-    try:
-        raw = extract_json(response.content)
-    except Exception:
+    # 🔒 HARD GUARD — THIS IS THE FIX
+    if not response.content or not response.content.strip():
         raw = []
+    else:
+        try:
+            raw = extract_json(response.content)
+        except Exception:
+            raw = []
 
     results = {}
 
@@ -146,14 +150,17 @@ def batched_kpi_engine(responsibilities: List[StructuredResponsibility]):
         for item in raw:
             idx = item.get("responsibility_index")
             try:
-                results[idx] = [KPI(**k) for k in item["kpis"]]
+                results[idx] = [KPI(**k) for k in item.get("kpis", [])]
             except Exception:
                 pass
 
-    # Ensure every responsibility has KPIs
+    # Ensure every responsibility gets KPIs
     final = []
     for i, resp in enumerate(responsibilities):
-        kpis = results.get(i) or fallback_kpis(resp)
+        kpis = results.get(i)
+        if not kpis:
+            kpis = fallback_kpis(resp)
+
         final.append({
             "responsibility": resp.dict(),
             "kpis": [k.dict() for k in kpis]
