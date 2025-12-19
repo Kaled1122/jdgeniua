@@ -55,7 +55,7 @@ def extract_json(text: str):
 
     text = text.strip()
     
-    # Handle markdown code blocks
+    # Remove markdown code blocks
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0].strip()
     elif "```" in text:
@@ -67,14 +67,22 @@ def extract_json(text: str):
                 text = part
                 break
     
+    # Remove any leading/trailing non-JSON text
+    text = text.strip()
+    
     # Try to find JSON object/array in the text
     if not (text.startswith("{") or text.startswith("[")):
-        # Try to extract JSON from text
-        json_match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
+        # Try to extract JSON from text using regex
+        json_match = re.search(r'(\[[\s\S]*\]|\{[\s\S]*\})', text)
         if json_match:
             text = json_match.group(1)
+        else:
+            raise ValueError(f"No JSON found in text. First 200 chars: {text[:200]}")
     
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON: {str(e)}\nFirst 500 chars: {text[:500]}")
 
 # =========================================
 # PROMPTS
@@ -107,15 +115,29 @@ RULES:
 - MUST include formulas
 - Allowed units: %, count, hours, days
 - No subjective language
-- JSON ARRAY ONLY
-- Each item must be:
-  {{
-    "responsibility_index": number,
-    "kpis": [ ... ]
-  }}
+- Return ONLY valid JSON, no markdown, no explanations
+- Each KPI must have: name, formula, target, unit, data_source, frequency, indicator_type
+
+CRITICAL: Return a JSON array. Each item must be:
+{{
+  "responsibility_index": 0,
+  "kpis": [
+    {{
+      "name": "Course Completion Rate",
+      "formula": "(Completed courses / Total courses) * 100",
+      "target": ">= 95%",
+      "unit": "%",
+      "data_source": "Course records",
+      "frequency": "Monthly",
+      "indicator_type": "Lagging"
+    }}
+  ]
+}}
 
 Structured Responsibilities:
 {responsibilities}
+
+Return ONLY the JSON array, nothing else:
 """)
 
 # =========================================
@@ -155,45 +177,76 @@ def fallback_kpis(resp: StructuredResponsibility) -> List[KPI]:
 
 def batched_kpi_engine(responsibilities: List[StructuredResponsibility]):
     kpi_llm = get_kpi_llm()
-    response = kpi_llm.invoke(
-        KPI_BATCH_PROMPT.format(
-            responsibilities=json.dumps([r.model_dump() for r in responsibilities], indent=2)
+    
+    try:
+        response = kpi_llm.invoke(
+            KPI_BATCH_PROMPT.format(
+                responsibilities=json.dumps([r.model_dump() for r in responsibilities], indent=2)
+            )
         )
-    )
-
-    # 🔒 HARD GUARD — THIS IS THE FIX
-    if not response.content or not response.content.strip():
-        raw = []
-    else:
-        try:
-            raw = extract_json(response.content)
-        except Exception:
+        
+        # Debug: Show raw response in expander
+        with st.expander("🔍 Debug: LLM Response (click to view)", expanded=False):
+            st.code(response.content, language="json")
+        
+        if not response.content or not response.content.strip():
+            st.warning("⚠️ LLM returned empty response. Using fallback KPIs.")
             raw = []
-
-    results = {}
-
-    # Build map from batch output
-    if isinstance(raw, list):
-        for item in raw:
-            idx = item.get("responsibility_index")
+        else:
             try:
-                results[idx] = [KPI(**k) for k in item.get("kpis", [])]
-            except Exception:
-                pass
+                raw = extract_json(response.content)
+                if not isinstance(raw, list):
+                    st.warning(f"⚠️ LLM response is not a list. Got: {type(raw)}")
+                    raw = []
+            except ValueError as e:
+                st.warning(f"⚠️ Failed to parse JSON: {str(e)}")
+                raw = []
+            except Exception as e:
+                st.warning(f"⚠️ Unexpected error parsing response: {str(e)}")
+                raw = []
 
-    # Ensure every responsibility gets KPIs
-    final = []
-    for i, resp in enumerate(responsibilities):
-        kpis = results.get(i)
-        if not kpis:
-            kpis = fallback_kpis(resp)
+        results = {}
 
-        final.append({
+        # Build map from batch output
+        if isinstance(raw, list):
+            for item in raw:
+                idx = item.get("responsibility_index")
+                if idx is None:
+                    continue
+                try:
+                    kpis = item.get("kpis", [])
+                    if kpis:
+                        results[idx] = [KPI(**k) for k in kpis]
+                except Exception as e:
+                    st.warning(f"⚠️ Failed to parse KPIs for index {idx}: {str(e)}")
+                    continue
+
+        # Ensure every responsibility gets KPIs
+        final = []
+        fallback_count = 0
+        for i, resp in enumerate(responsibilities):
+            kpis = results.get(i)
+            if not kpis:
+                kpis = fallback_kpis(resp)
+                fallback_count += 1
+
+            final.append({
+                "responsibility": resp.model_dump(),
+                "kpis": [k.model_dump() for k in kpis]
+            })
+        
+        if fallback_count > 0:
+            st.info(f"ℹ️ Used fallback KPIs for {fallback_count} out of {len(responsibilities)} responsibilities. Check debug output above.")
+
+        return final
+        
+    except Exception as e:
+        st.error(f"❌ KPI generation failed: {str(e)}")
+        # Return fallback for all
+        return [{
             "responsibility": resp.model_dump(),
-            "kpis": [k.model_dump() for k in kpis]
-        })
-
-    return final
+            "kpis": [k.model_dump() for k in fallback_kpis(resp)]
+        } for resp in responsibilities]
 
 # =========================================
 # MAIN AGENT (NO AI)
