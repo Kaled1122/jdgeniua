@@ -1,9 +1,10 @@
 # =========================================
-# app.py — Clearly Separated Agentic System
+# app.py — JD → KPI Agentic System (SAFE)
 # =========================================
 
 import streamlit as st
 import re
+import json
 from typing import List
 from pydantic import BaseModel, ValidationError
 
@@ -46,19 +47,34 @@ class KPI(BaseModel):
     indicator_type: str  # leading / lagging
 
 # =========================================
+# JSON SAFETY (CRITICAL)
+# =========================================
+
+def extract_json(text: str):
+    """
+    Safely extract JSON from LLM output.
+    Handles markdown, stray text, and whitespace.
+    """
+    text = text.strip()
+
+    if text.startswith("```"):
+        text = text.split("```")[1]
+
+    return json.loads(text)
+
+# =========================================
 # PROMPTS (ROLE-BOUND)
 # =========================================
 
 JD_REWRITE_PROMPT = ChatPromptTemplate.from_template("""
 You are Sub-Agent 1: JD Normalizer.
 
-Your ONLY task is to rewrite job responsibilities into
-structured, outcome-focused responsibilities.
+Rewrite job responsibilities into structured responsibilities.
 
 STRICT RULES:
 - Do NOT generate KPIs
-- Do NOT evaluate performance
 - Do NOT add commentary
+- Do NOT use subjective adjectives
 - Each item MUST include:
   action, object, outcome, control_scope
 - Output JSON ARRAY ONLY
@@ -70,7 +86,7 @@ Job Description:
 KPI_PROMPT = ChatPromptTemplate.from_template("""
 You are Sub-Agent 2: KPI Engineer.
 
-Your ONLY task is to generate measurable KPIs.
+Generate measurable KPIs ONLY.
 
 STRICT RULES:
 - Max 3 KPIs
@@ -94,7 +110,7 @@ def jd_normalizer(jd_text: str) -> List[StructuredResponsibility]:
         JD_REWRITE_PROMPT.format(jd_text=jd_text)
     )
 
-    raw = eval(response.content)
+    raw = extract_json(response.content)
 
     return [
         StructuredResponsibility(**item)
@@ -115,7 +131,7 @@ def kpi_engineer(
         )
     )
 
-    raw = eval(response.content)
+    raw = extract_json(response.content)
 
     return [
         KPI(**item)
@@ -145,14 +161,14 @@ def validate_kpis(kpis: List[KPI]):
             )
 
 # =========================================
-# MAIN AGENT (ORCHESTRATOR — NO LLM)
+# MAIN AGENT (ORCHESTRATOR — NO AI)
 # =========================================
 
 def main_agent(jd_text: str):
-    # Step 1 — Call Sub-Agent 1
+    # Step 1 — Normalize JD
     responsibilities = jd_normalizer(jd_text)
 
-    # Step 2 — Call Sub-Agent 2 per responsibility
+    # Step 2 — Generate KPIs per responsibility
     output = []
 
     for resp in responsibilities:
@@ -171,16 +187,17 @@ def main_agent(jd_text: str):
 # =========================================
 
 st.set_page_config(
-    page_title="JD → KPI (Clearly Separated Agents)",
+    page_title="JD → KPI Generator",
     layout="wide"
 )
 
 st.title("JD → KPI Generator")
-st.caption("Main Orchestrator + 2 Explicit Sub-Agents")
+st.caption("Main Orchestrator + 2 Explicit Sub-Agents (Safe & Deterministic)")
 
 jd_text = st.text_area(
     "Paste Job Description",
-    height=320
+    height=320,
+    placeholder="Paste the full job description here..."
 )
 
 if st.button("Run Agent System"):
